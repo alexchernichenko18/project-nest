@@ -44,6 +44,59 @@ $ npm run start:dev
 $ npm run start:prod
 ```
 
+## Run with Docker
+
+```bash
+# First run (build + start):
+$ docker compose up --build
+
+# Regular run:
+$ docker compose up
+
+# Stop:
+$ docker compose down
+```
+
+## Project structure
+
+```
+project-nest/
+├── prisma/                  # Prisma schema and migrations
+├── scripts/                 # Helper scripts
+├── src/
+│   ├── auth/                # Authentication module (JWT, strategy, guards)
+│   ├── mail/                # Email sending module (SMTP via Mailpit)
+│   ├── messages/            # Messages module (CRUD, DTOs)
+│   ├── prisma/              # PrismaService wrapper
+│   ├── realtime/            # WebSocket gateway and presence tracking
+│   ├── search/              # Full-text search module (Meilisearch)
+│   ├── app.module.ts        # Root application module
+│   ├── instrument.ts        # Sentry / instrumentation bootstrap
+│   └── main.ts              # Application entrypoint (Nest + Swagger)
+├── test/                    # E2E tests
+├── docker-compose.yml       # Local dev orchestration
+└── Dockerfile.dev           # Dev image for the API service
+```
+
+## Services (docker-compose)
+
+| Service        | Port(s)            | Description                                                                 |
+| -------------- | ------------------ | --------------------------------------------------------------------------- |
+| `api`          | `3001`             | NestJS application. Swagger UI available at `http://localhost:3001/api`.    |
+| `redis`        | `6379`             | Redis cache / pub-sub used by the realtime and auth modules.                |
+| `redis-insight`| `5540`             | Web UI for inspecting Redis at `http://localhost:5540`.                     |
+| `mailpit`      | `1025` / `8025`    | SMTP server (`1025`) + web UI (`http://localhost:8025`) for dev emails.     |
+| `meilisearch`  | `7700`             | Search engine for the `search` module at `http://localhost:7700`.           |
+
+## Application modules
+
+- **AuthModule** — email/password authentication with JWT, single-session via `tokenVersion`, `/me` response caching.
+- **MailModule** — outbound transactional emails through SMTP (Mailpit in dev).
+- **MessagesModule** — message resources with validation DTOs and service-layer logic.
+- **PrismaModule** — shared `PrismaService` wrapping the Prisma client.
+- **RealtimeModule** — WebSocket gateway (`chat.gateway.ts`) and Redis-backed presence service.
+- **SearchModule** — indexing and querying documents in Meilisearch.
+
 ## Run tests
 
 ```bash
