@@ -27,7 +27,7 @@ async function bootstrap() {
   const config = new DocumentBuilder()
     .setTitle('Auth API')
     .setDescription('Email/password auth з JWT (single-session via tokenVersion)')
-    .setVersion('1.0')
+    .setVersion('1.0.1')
     .addBearerAuth({ type: 'http', scheme: 'bearer', bearerFormat: 'JWT' }, 'jwt')
     .build();
 
