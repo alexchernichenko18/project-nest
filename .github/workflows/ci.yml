@@ -2,9 +2,9 @@ name: CI
 
 on:
   pull_request:
-    branches: [main, master]
+    branches: [main]
   push:
-    branches: [main, master]
+    branches: [main]
 
 # Скасовуємо застарілі runs якщо в той самий PR/branch прийшов новий push
 concurrency:
