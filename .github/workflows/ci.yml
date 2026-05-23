@@ -64,11 +64,6 @@ jobs:
         env:
           MEILI_MASTER_KEY: devMasterKey123
           MEILI_ENV: development
-        options: >-
-          --health-cmd "wget --no-verbose --spider http://localhost:7700/health"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 12
 
       mailpit:
         image: axllent/mailpit:latest
@@ -103,6 +98,19 @@ jobs:
 
       - name: Install dependencies
         run: npm ci --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000
+
+      - name: Wait for Meilisearch
+        run: |
+          for i in {1..30}; do
+            if curl -sf http://localhost:7700/health > /dev/null; then
+              echo "Meilisearch is ready"
+              exit 0
+            fi
+            echo "Waiting for Meilisearch... ($i/30)"
+            sleep 2
+          done
+          echo "Meilisearch did not become ready in time"
+          exit 1
 
       - name: Generate Prisma client
         run: npx prisma generate
