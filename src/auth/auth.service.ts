@@ -1,11 +1,15 @@
 import { BadRequestException, Inject, Injectable, UnauthorizedException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import * as bcrypt from 'bcryptjs';
+import * as crypto from 'crypto';
 import { JwtService } from '@nestjs/jwt';
 import { OAuth2Client } from 'google-auth-library';
 import { ConfigService } from '@nestjs/config';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import type { Cache } from 'cache-manager';
+import { MailService } from '../mail/mail.service';
+
+const RESET_TOKEN_TTL_MS = 60 * 60 * 1000;
 
 @Injectable()
 export class AuthService {
@@ -16,6 +20,7 @@ export class AuthService {
     private jwt: JwtService,
     private cfg: ConfigService,
     @Inject(CACHE_MANAGER) private cache: Cache,
+    private mail: MailService,
   ) {
     this.googleClient = new OAuth2Client(cfg.get<string>('GOOGLE_CLIENT_ID'));
   }
@@ -108,6 +113,63 @@ export class AuthService {
 
     const accessToken = await this.signToken(user.id, user.email, user.tokenVersion);
     return { user: { id: user.id, email: user.email, name: user.name }, accessToken };
+  }
+
+  async forgotPassword(email: string) {
+    const normalizedEmail = email.toLowerCase();
+    const user = await this.prisma.user.findUnique({
+      where: { email: normalizedEmail },
+      select: { id: true, email: true, password: true },
+    });
+
+    if (user && user.password) {
+      const rawToken = crypto.randomBytes(32).toString('hex');
+      const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+      const expiresAt = new Date(Date.now() + RESET_TOKEN_TTL_MS);
+
+      await this.prisma.passwordResetToken.deleteMany({ where: { userId: user.id } });
+      await this.prisma.passwordResetToken.create({
+        data: { userId: user.id, tokenHash, expiresAt },
+      });
+
+      const frontendUrl = this.cfg.get<string>('FRONTEND_URL') ?? 'http://localhost:3000';
+      const resetUrl = `${frontendUrl}/reset-password?token=${rawToken}`;
+
+      try {
+        await this.mail.sendPasswordResetEmail(user.email, resetUrl);
+      } catch {
+        // Swallow to preserve anti-enumeration; MailService already logged the cause.
+      }
+    }
+
+    return { message: 'If an account with that email exists, a reset link has been sent' };
+  }
+
+  async resetPassword(token: string, newPassword: string) {
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+
+    const record = await this.prisma.passwordResetToken.findUnique({
+      where: { tokenHash },
+      include: { user: true },
+    });
+
+    if (!record || record.expiresAt < new Date()) {
+      throw new BadRequestException('Invalid or expired reset token');
+    }
+
+    const hash = await bcrypt.hash(newPassword, 10);
+
+    await this.prisma.$transaction([
+      this.prisma.user.update({
+        where: { id: record.userId },
+        data: { password: hash, tokenVersion: { increment: 1 } },
+      }),
+      this.prisma.passwordResetToken.deleteMany({ where: { userId: record.userId } }),
+    ]);
+
+    await this.cache.del(`auth:me:${record.userId}`);
+
+    return { message: 'Password has been reset successfully' };
   }
 
   private async signToken(sub: unknown, email: string, tokenVersion: number) {

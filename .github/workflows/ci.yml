@@ -1,0 +1,120 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main, master]
+  push:
+    branches: [main, master]
+
+# Скасовуємо застарілі runs якщо в той самий PR/branch прийшов новий push
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ─────────────────────────────────────────────────────────────
+  # Статичні перевірки: lint + build. Без зовнішніх сервісів.
+  # ─────────────────────────────────────────────────────────────
+  static-checks:
+    name: Lint & Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Lint
+        run: npm run lint:check
+
+      - name: Build
+        run: npm run build
+
+  # ─────────────────────────────────────────────────────────────
+  # Тести: unit + integration + e2e. З підняттям інфри.
+  # ─────────────────────────────────────────────────────────────
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      meilisearch:
+        image: getmeili/meilisearch:v1.11
+        ports:
+          - 7700:7700
+        env:
+          MEILI_MASTER_KEY: devMasterKey123
+          MEILI_ENV: development
+        options: >-
+          --health-cmd "wget --no-verbose --spider http://localhost:7700/health"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+
+      mailpit:
+        image: axllent/mailpit:latest
+        ports:
+          - 1025:1025
+          - 8025:8025
+
+    env:
+      # Test Mongo (Atlas) — береться з GitHub Secrets
+      DATABASE_URL: ${{ secrets.TEST_DATABASE_URL }}
+      JWT_SECRET: ci-test-jwt-secret
+      JWT_EXPIRES: 1h
+
+      # Service containers вище — конектимось через localhost
+      REDIS_URL: redis://localhost:6379
+      MEILI_HOST: http://localhost:7700
+      MEILI_MASTER_KEY: devMasterKey123
+      SMTP_HOST: localhost
+      SMTP_PORT: 1025
+
+      EMAIL_FROM: noreply@ci.test
+      FRONTEND_URL: http://localhost:3000
+      NODE_ENV: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Sync test DB schema (indexes)
+        run: npx prisma db push --skip-generate
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Integration tests
+        run: npm run test:integration
+
+      - name: E2E tests
+        run: npm run test:e2e
